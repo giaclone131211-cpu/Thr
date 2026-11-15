@@ -1,0 +1,58 @@
+name: Build APK
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  web-tests:
+    name: Kiểm thử giao diện + engine video (Chromium)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Cài Playwright + Chromium
+        run: |
+          cd tests/e2e
+          npm init -y >/dev/null 2>&1 || true
+          npm install playwright@1.48.2
+          npx playwright install --with-deps chromium
+      - name: Chạy test
+        run: node tests/e2e/run.js
+      - name: Test backend đổi token
+        run: node backend/token-broker/test.js
+
+  build:
+    name: Test JVM + build debug APK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.9
+
+      - name: Unit test (parser API, ranker, chuẩn hóa TTS, OAuth, model manager…)
+        run: gradle testDebugUnitTest --no-daemon
+
+      - name: Build debug APK
+        run: gradle assembleDebug --no-daemon
+
+      - name: Quét bí mật trong source (không được có secret/khóa phát hành)
+        run: |
+          if grep -rIn --exclude-dir=.git --exclude-dir=build -E "(client_secret|THREADS_APP_SECRET)\s*[:=]\s*[\"'][A-Za-z0-9]{16,}|AIza[0-9A-Za-z_-]{30,}|sk-[A-Za-z0-9]{30,}" . ; then
+            echo "Phát hiện chuỗi giống bí mật"; exit 1; fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Threads2Video-APK
+          path: app/build/outputs/apk/debug/*.apk
